@@ -5,6 +5,8 @@ import argparse
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
+import matplotlib.image as mpimg
+from matplotlib.offsetbox import OffsetImage, AnnotationBbox
 import supersuit as ss
 import multiprocessing
 import time
@@ -16,11 +18,8 @@ from pettingzoo.butterfly import knights_archers_zombies_v10
 from pettingzoo.utils.wrappers import BaseParallelWrapper
 
 # CONFIG
-TOTAL_TIMESTEPS = 10000000
+TOTAL_TIMESTEPS = 5000000
 NUM_RUNS = 8
-OUTPUT_DIR = "./reward_shaping_experiment/"
-LOG_DIR = os.path.join(OUTPUT_DIR, "logs")
-MODELS_DIR = os.path.join(OUTPUT_DIR, "models")
 
 SPAWN_RATE = 5 # every X steps
 NUM_ARCHERS = 2
@@ -34,10 +33,19 @@ N_STEPS_PPO = 2048
 STEP_SIZE = N_STEPS_PPO * TOTAL_AGENTS_PER_STEP
 REAL_TOTAL_TIMESTEPS = ((TOTAL_TIMESTEPS + STEP_SIZE - 1) // STEP_SIZE) * STEP_SIZE
 
+OUTPUT_DIR = f"./reward_shaping_experiment_{PARALLEL_ENVS}x{NUM_RUNS}x{REAL_TOTAL_TIMESTEPS//1000000}M/"
+LOG_DIR = os.path.join(OUTPUT_DIR, "logs")
+MODELS_DIR = os.path.join(OUTPUT_DIR, "models")
+
 AGENT_NAMES = [f"archer_{i}" for i in range(NUM_ARCHERS)] + [f"knight_{i}" for i in range(NUM_KNIGHTS)]
+
+print(f"Output Directory: {OUTPUT_DIR}")
+print(f"Total Timesteps per run: {REAL_TOTAL_TIMESTEPS} ~ {REAL_TOTAL_TIMESTEPS//1000000}M")
 
 if not os.path.exists(LOG_DIR): os.makedirs(LOG_DIR)
 if not os.path.exists(MODELS_DIR): os.makedirs(MODELS_DIR)
+
+WINDOW = 100 # Don't choose a multiple of 8 to avoid artifacts !
 
 # REWARD SHAPING WRAPPER
 class KnightShapingWrapper(BaseParallelWrapper):
@@ -90,7 +98,7 @@ class AgentBreakdownCallback(BaseCallback):
         self.history['shaping_sum'] = []
         self.history['true_team'] = []
         self.current_shaping = {name: 0.0 for name in AGENT_NAMES}
-        self.current_original = {i: {name: 0.0 for name in AGENT_NAMES} for i in range(8)} # PARALLEL_ENVS
+        self.current_original = {i: {name: 0.0 for name in AGENT_NAMES} for i in range(PARALLEL_ENVS)}
 
     def _on_step(self) -> bool:
         infos = self.locals.get("infos", [])
@@ -203,7 +211,7 @@ def run_training():
     scenarios = [("Shaped Reward", True), ("Base Reward", False)]
     tasks = [(name, use_shaping, i) for name, use_shaping in scenarios for i in range(1, NUM_RUNS + 1)]
 
-    print(f"Starting Multi-processing training for {len(tasks)} runs...")
+    print(f"Starting Multi-processing training for {len(tasks)} runs, {REAL_TOTAL_TIMESTEPS} timesteps each...")
     with multiprocessing.Pool(processes=8) as pool:
         pool.map(train_single_run, tasks)
 
@@ -255,32 +263,28 @@ def run_plotting(plot_individual=False):
 
     common_x = np.linspace(min_iter, max_iter, 1000)
     metrics = ['team', 'archers', 'knights', 'length']
-    fig, axs = plt.subplots(2, 2, figsize=(16, 10))
+    fig, axs = plt.subplots(2, 2, figsize=(16, 10), constrained_layout=True)
     metric_positions = {'team': (0, 0), 'archers': (0, 1), 'knights': (1, 1), 'length': (1, 0)}
 
-    window = 100 # Don't choose a multiple of 8 to avoid artifacts !
     individual_alpha = 0.2
 
     # Suptitle w stats
     suptitle_parts = [f"{NUM_RUNS} runs each"]
     for name in scenarios:
         suptitle_parts.append(f"{name}: {scenario_stats[name]['episodes']} episodes, avg {scenario_stats[name]['avg_runtime']:.1f}s")
-    suptitle_parts.append(f"Smoothing window={window}")
+    suptitle_parts.append(f"Smoothing window={WINDOW}")
     suptitle = "Training Analysis: " + ", ".join(suptitle_parts)
     fig.suptitle(suptitle, fontsize=12, fontweight='bold')
 
     mean_ys = {metric: [] for metric in metrics}
-    percentile_ys = {metric: {'p25': [], 'p75': []} for metric in ['team', 'length']}
+    percentile_ys = {metric: {'p25': [], 'p75': []} for metric in metrics}
 
     for metric in metrics:
         ax = axs[metric_positions[metric]]
         
         # Title
         base_title = metric.capitalize()
-        if metric in ['team', 'length']:
-            title_info = f"{base_title} (25-75% percentiles)"
-        else:
-            title_info = f"{base_title}"
+        title_info = f"{base_title} (25-75% percentiles)"
         ax.set_title(title_info, fontsize=14, fontweight='bold')
         
         for name in scenarios:
@@ -289,7 +293,7 @@ def run_plotting(plot_individual=False):
                 for d in all_raw_data[name]:
                     iters = d['timestamps'] // TOTAL_AGENTS_PER_STEP
                     val = d['team'] if metric == 'team' else d['length']
-                    val_s = smooth_data(val, window=window)
+                    val_s = smooth_data(val, window=WINDOW)
                     iter_s = iters[len(iters)-len(val_s):]
                     if len(iter_s) > 1:
                         interp = np.interp(common_x, iter_s, val_s)
@@ -317,7 +321,7 @@ def run_plotting(plot_individual=False):
                     interp_runs = []
                     for d in all_raw_data[name]:
                         iters = d['timestamps'] // TOTAL_AGENTS_PER_STEP
-                        val_s = smooth_data(d[archer], window=window)
+                        val_s = smooth_data(d[archer], window=WINDOW)
                         iter_s = iters[len(iters)-len(val_s):]
                         if len(iter_s) > 1:
                             interp = np.interp(common_x, iter_s, val_s)
@@ -327,8 +331,13 @@ def run_plotting(plot_individual=False):
                     if interp_runs:
                         runs_arr = np.array(interp_runs)
                         mean = np.mean(runs_arr, axis=0)
+                        p25 = np.percentile(runs_arr, 25, axis=0)
+                        p75 = np.percentile(runs_arr, 75, axis=0)
                         ax.plot(common_x, mean, color=agent_color, label=f"{archer} ({name})", linewidth=2)
+                        ax.fill_between(common_x, p25, p75, color=agent_color, alpha=0.2)
                         mean_ys[metric].extend(mean)
+                        percentile_ys[metric]['p25'].extend(p25)
+                        percentile_ys[metric]['p75'].extend(p75)
             
             elif metric == 'knights':
                 knight_names = [f"knight_{i}" for i in range(NUM_KNIGHTS)]
@@ -340,7 +349,7 @@ def run_plotting(plot_individual=False):
                     interp_runs = []
                     for d in all_raw_data[name]:
                         iters = d['timestamps'] // TOTAL_AGENTS_PER_STEP
-                        val_s = smooth_data(d[knight], window=window)
+                        val_s = smooth_data(d[knight], window=WINDOW)
                         iter_s = iters[len(iters)-len(val_s):]
                         if len(iter_s) > 1:
                             interp = np.interp(common_x, iter_s, val_s)
@@ -350,17 +359,46 @@ def run_plotting(plot_individual=False):
                     if interp_runs:
                         runs_arr = np.array(interp_runs)
                         mean = np.mean(runs_arr, axis=0)
+                        p25 = np.percentile(runs_arr, 25, axis=0)
+                        p75 = np.percentile(runs_arr, 75, axis=0)
                         ax.plot(common_x, mean, color=agent_color, label=f"{knight} ({name})", linewidth=2)
+                        ax.fill_between(common_x, p25, p75, color=agent_color, alpha=0.2)
                         mean_ys[metric].extend(mean)
+                        percentile_ys[metric]['p25'].extend(p25)
+                        percentile_ys[metric]['p75'].extend(p75)
 
-        ax.legend()
+        # ax.legend(loc='upper right')
+        ax.legend(loc='upper left')
         ax.set_ylabel("Episode Length" if metric == 'length' else "Raw Reward")
         ax.set_xlabel(f"Iterations (Timesteps / {TOTAL_AGENTS_PER_STEP})")
 
-    # ylim based on percentiles for team and length, mean for others
+        # Add agent icons
+        move_x, move_y = 0.0, -0.1
+        if metric == 'archers':
+            try:
+                img = mpimg.imread('assets/archer.png')
+                img = np.rot90(img, k=-1) # 270 rot
+                pos = ax.get_position()
+                icon_ax = fig.add_axes([pos.x0 - 0.009 + move_x, pos.y1 + 0.025 + move_y, 0.035, 0.035]) # x left, y bottom, width, height
+                icon_ax.imshow(img)
+                icon_ax.axis('off')
+            except Exception:
+                pass
+        elif metric == 'knights':
+            try:
+                img = mpimg.imread('assets/knight.png')
+                img = np.rot90(img, 2) # 180 rot
+                pos = ax.get_position()
+                icon_ax = fig.add_axes([pos.x0 - 0.009 + move_x, pos.y1 - 0.04 + move_y, 0.035, 0.035])
+                icon_ax.imshow(img)
+                icon_ax.axis('off')
+            except Exception:
+                pass
+
+    # ylim based on percentiles for all metrics
     for metric in metrics:
         ax = axs[metric_positions[metric]]
-        if metric in ['team', 'length'] and percentile_ys[metric]['p25']:
+        if percentile_ys[metric]['p25']:
             ymin = min(percentile_ys[metric]['p25'])
             ymax = max(percentile_ys[metric]['p75'])
             ax.set_ylim(ymin, ymax)
@@ -369,7 +407,6 @@ def run_plotting(plot_individual=False):
             ymax = max(mean_ys[metric])
             ax.set_ylim(ymin, ymax)
 
-    plt.tight_layout()
     plt.savefig(os.path.join(OUTPUT_DIR, "shaping_comparison.png"), dpi=150)
     print("Plot saved.")
     plt.show()

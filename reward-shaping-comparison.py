@@ -40,7 +40,7 @@ COLORS = {
     "Base_Reward": "#ff5353",
     "Proximity_Shaping": "#2a9dff",
     "Bottom_Safety_Shaping": "#28a745",
-    "Mixed_Shaping": "#ffa500"  # orange
+    "Mixed_Shaping": "#ffa500"
 }
 
 # SCENARIOS: (name, use_shaping, shapings_list)
@@ -71,7 +71,7 @@ print(f"Total Timesteps per run: {REAL_TOTAL_TIMESTEPS} ~ {REAL_TOTAL_TIMESTEPS/
 if not os.path.exists(LOG_DIR): os.makedirs(LOG_DIR)
 if not os.path.exists(MODELS_DIR): os.makedirs(MODELS_DIR)
 
-# For smoothing the plot lines: Don't choose a multiple of 8 to avoid artifacts !
+# For smoothing the plot lines
 SMOOTH_WINDOW = 300 if REAL_TOTAL_TIMESTEPS >= 5_000_000 else 100 if REAL_TOTAL_TIMESTEPS >= 1_000_000 else 40
 
 

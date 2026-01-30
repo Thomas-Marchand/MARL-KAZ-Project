@@ -23,7 +23,7 @@ def bottom_safety_shaping(obs, agent, rewards, infos, bottom_threshold=0.8, rewa
     zombie_relative_ys = obs[agent][row_zombie_start:row_zombie_end, 2]
     valid_zombies = zombie_distances > 0
     if not np.any(valid_zombies):
-        return 1.0
+        return reward_scale
     
     max_relative_y = np.max(zombie_relative_ys[valid_zombies])
     max_y = agent_y + max_relative_y
@@ -33,10 +33,12 @@ def bottom_safety_shaping(obs, agent, rewards, infos, bottom_threshold=0.8, rewa
     upper = bottom_threshold - width
     lower = bottom_threshold + width
     
-    # Compute reward directly
+    # Compute base reward
     if max_y <= upper:
-        return 1.0
+        return reward_scale
     elif max_y >= lower:
-        return -1.0
+        return -reward_scale
     else:
-        return 1.0 - 2.0 * (max_y - upper) / (2.0 * width)
+        base_reward = 1.0 - 2.0 * (max_y - upper) / (2.0 * width)
+    
+    return reward_scale * base_reward

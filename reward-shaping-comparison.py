@@ -16,74 +16,105 @@ from stable_baselines3.common.vec_env import VecMonitor
 from stable_baselines3.common.utils import set_random_seed
 from pettingzoo.butterfly import knights_archers_zombies_v10
 from pettingzoo.utils.wrappers import BaseParallelWrapper
+from reward_shaping import no_shaping, proximity_shaping, bottom_safety_shaping
 
-# CONFIG
-TOTAL_TIMESTEPS = 5000000
-NUM_RUNS = 8
+# === CONFIG ===
 
+TOTAL_TIMESTEPS = 100000
+
+N_RUNS_PER_SCENARIO = 2
 SPAWN_RATE = 5 # every X steps
-NUM_ARCHERS = 2
-NUM_KNIGHTS = 2
+NUM_ARCHERS, NUM_KNIGHTS = 2, 2
 MAX_ZOMBIES = 10
 MAX_ARROWS = 10
 PARALLEL_ENVS = 8
-TOTAL_AGENTS_PER_STEP = (NUM_ARCHERS + NUM_KNIGHTS) * PARALLEL_ENVS
 N_STEPS_PPO = 2048
 
-STEP_SIZE = N_STEPS_PPO * TOTAL_AGENTS_PER_STEP
+N_CPUS = multiprocessing.cpu_count()
+AGENTS_PER_STEP = (NUM_ARCHERS + NUM_KNIGHTS) * PARALLEL_ENVS
+STEP_SIZE = N_STEPS_PPO * AGENTS_PER_STEP
 REAL_TOTAL_TIMESTEPS = ((TOTAL_TIMESTEPS + STEP_SIZE - 1) // STEP_SIZE) * STEP_SIZE
 
-OUTPUT_DIR = f"./reward_shaping_experiment_{PARALLEL_ENVS}x{NUM_RUNS}x{REAL_TOTAL_TIMESTEPS//1000000}M/"
+# COLORS for scenarios
+COLORS = {
+    "Base_Reward": "#ff5353",
+    "Proximity_Shaping": "#2a9dff",
+    "Bottom_Safety_Shaping": "#28a745",
+    "Mixed_Shaping": "#ffa500"  # orange
+}
+
+# SCENARIOS: (name, use_shaping, shapings_list)
+# Each shaping in shapings_list: {"func": func, "kwargs": {}, "start_pct": 0.0, "end_pct": 1.0}
+SCENARIOS = [
+    ("Base Reward", False, []),
+    ("Proximity Shaping", True, [
+        {"func": proximity_shaping, "kwargs": {"reward_scale": 0.05}, "start_pct": 0.0, "end_pct": 1.0}
+    ]),
+    ("Bottom Safety Shaping", True, [
+        {"func": bottom_safety_shaping, "kwargs": {"bottom_threshold": 0.8, "reward_scale": 0.05}, "start_pct": 0.0, "end_pct": 1.0}
+    ]),
+    ("Mixed Shaping", True, [
+        {"func": proximity_shaping, "kwargs": {"reward_scale": 0.05}, "start_pct": 0.0, "end_pct": 0.5},
+        {"func": bottom_safety_shaping, "kwargs": {"bottom_threshold": 0.8, "reward_scale": 0.05}, "start_pct": 0.0, "end_pct": 0.3}
+    ])
+]
+
+OUTPUT_DIR = f"./RShaping_{PARALLEL_ENVS}x{N_RUNS_PER_SCENARIO}x{REAL_TOTAL_TIMESTEPS//1000}K/"
 LOG_DIR = os.path.join(OUTPUT_DIR, "logs")
 MODELS_DIR = os.path.join(OUTPUT_DIR, "models")
 
 AGENT_NAMES = [f"archer_{i}" for i in range(NUM_ARCHERS)] + [f"knight_{i}" for i in range(NUM_KNIGHTS)]
 
 print(f"Output Directory: {OUTPUT_DIR}")
-print(f"Total Timesteps per run: {REAL_TOTAL_TIMESTEPS} ~ {REAL_TOTAL_TIMESTEPS//1000000}M")
+print(f"Total Timesteps per run: {REAL_TOTAL_TIMESTEPS} ~ {REAL_TOTAL_TIMESTEPS//1000}K")
 
 if not os.path.exists(LOG_DIR): os.makedirs(LOG_DIR)
 if not os.path.exists(MODELS_DIR): os.makedirs(MODELS_DIR)
 
-WINDOW = 100 # Don't choose a multiple of 8 to avoid artifacts !
+# For smoothing the plot lines: Don't choose a multiple of 8 to avoid artifacts !
+SMOOTH_WINDOW = 300 if REAL_TOTAL_TIMESTEPS >= 5_000_000 else 100 if REAL_TOTAL_TIMESTEPS >= 1_000_000 else 40
 
-# REWARD SHAPING WRAPPER
-class KnightShapingWrapper(BaseParallelWrapper):
-    """
-    Adds a reward to knights based on proximity to the nearest zombie.
-    Observation structure (vector_state=True):
-    Zombie rows start at index 18. Column 0 is the distance.
-    """
+
+# ==============
+#    TRAINING
+# ==============
+
+# Shaping
+class RewardShapingWrapper(BaseParallelWrapper):
+    def __init__(self, env, shapings, total_timesteps):
+        super().__init__(env)
+        self.shapings = shapings
+        self.total_timesteps = total_timesteps
+        self.step_counter = 0
+    
     def step(self, actions):
+        self.step_counter += 1
+        current_pct = self.step_counter / self.total_timesteps if self.total_timesteps else 0.0
+        
         obs, rewards, terminations, truncations, infos = super().step(actions)
         
-        z_start, z_end = 18, 28 
-
         for agent in self.agents:
-            shaped_val = 0.0
-            if "knight" in agent and agent in obs:
-                zombie_dists = obs[agent][z_start:z_end, 0]
-                valid_dists = zombie_dists[zombie_dists > 0]
-                
-                if len(valid_dists) > 0:
-                    closest_dist = np.min(valid_dists)
-                    # Reward: up to 0.05 per step for being near a zombie
-                    shaped_val = 0.05 * (1.0 - closest_dist)
-                    original_reward = float(rewards[agent])
-                    rewards[agent] = original_reward + shaped_val
+            shaped_reward = 0.0
+            for shaping in self.shapings:
+                if shaping['start_pct'] <= current_pct <= shaping['end_pct']:
+                    shaped_reward += shaping['func'](obs, agent, rewards, infos, **shaping['kwargs'])
+            
+            original_reward = float(rewards[agent])
+            rewards[agent] = original_reward + shaped_reward
             
             # Store shaping info in the info dict for the callback to see
             if agent in infos:
-                infos[agent]["shaping_reward"] = shaped_val
-                infos[agent]["original_reward"] = original_reward if "knight" in agent and len(valid_dists) > 0 else float(rewards[agent])
+                infos[agent]["shaping_reward"] = shaped_reward
+                infos[agent]["original_reward"] = original_reward
         
-        # Set for dead agents
+        # dead
         for agent in set(self.possible_agents) - set(self.agents):
             if agent in infos:
                 infos[agent]["original_reward"] = float(rewards.get(agent, 0))
                 infos[agent]["shaping_reward"] = 0.0
-                    
+        
         return obs, rewards, terminations, truncations, infos
+
 
 # CUSTOM CALLBACK
 class AgentBreakdownCallback(BaseCallback):
@@ -164,14 +195,14 @@ class AgentBreakdownCallback(BaseCallback):
         return {k: np.array(v) for k, v in self.history.items()}
 
 
-def make_env(use_shaping, render_mode=None, num_envs=8):
+def make_env(use_shaping, render_mode=None, num_envs=8, shapings=None, total_timesteps=None):
     env = knights_archers_zombies_v10.parallel_env(
         spawn_rate=SPAWN_RATE, num_archers=NUM_ARCHERS, num_knights=NUM_KNIGHTS,
         max_zombies=MAX_ZOMBIES, max_arrows=MAX_ARROWS,
         vector_state=True, use_typemasks=False, render_mode=render_mode
     )
-    if use_shaping:
-        env = KnightShapingWrapper(env)
+    if use_shaping and shapings:
+        env = RewardShapingWrapper(env, shapings, total_timesteps)
     env = ss.black_death_v3(env)
     env = ss.flatten_v0(env)
     env = ss.pettingzoo_env_to_vec_env_v1(env)
@@ -181,17 +212,18 @@ def make_env(use_shaping, render_mode=None, num_envs=8):
     return env
 
 
-# MODES: TRAIN / PLOT / PLAY
+
+
 
 def train_single_run(args):
-    name, use_shaping, run_idx = args
+    name, use_shaping, shapings, run_idx = args
     run_name = f"{name.replace(' ', '_')}_run{run_idx}"
     set_random_seed(run_idx * 42)
     
     print(f"STARTING: {name} | RUN: {run_idx}")
     start_time = time.time()
-    env = make_env(use_shaping=use_shaping, num_envs=PARALLEL_ENVS)
-    model = PPO("MlpPolicy", env, verbose=0, learning_rate=3e-4, batch_size=2048)
+    env = make_env(use_shaping=use_shaping, num_envs=PARALLEL_ENVS, shapings=shapings, total_timesteps=REAL_TOTAL_TIMESTEPS)
+    model = PPO("MlpPolicy", env, verbose=0, learning_rate=3e-4, batch_size=2048, n_steps=N_STEPS_PPO)
     callback = AgentBreakdownCallback(run_idx, use_shaping=use_shaping)
     
     model.learn(total_timesteps=TOTAL_TIMESTEPS, callback=callback)
@@ -208,24 +240,36 @@ def train_single_run(args):
     return True
 
 def run_training():
-    scenarios = [("Shaped Reward", True), ("Base Reward", False)]
-    tasks = [(name, use_shaping, i) for name, use_shaping in scenarios for i in range(1, NUM_RUNS + 1)]
+    scenarios = SCENARIOS
+    tasks = [(name, use_shaping, shapings, i) for name, use_shaping, shapings in scenarios for i in range(1, N_RUNS_PER_SCENARIO + 1)]
 
     print(f"Starting Multi-processing training for {len(tasks)} runs, {REAL_TOTAL_TIMESTEPS} timesteps each...")
-    with multiprocessing.Pool(processes=8) as pool:
+    with multiprocessing.Pool(processes=N_CPUS) as pool:
         pool.map(train_single_run, tasks)
 
 
 
-# MODE: PLOT
+
+# ==============
+#    PLOTTING
+# ==============
+
 def smooth_data(values, window=20):
-    if len(values) < window: return values
-    return np.convolve(values, np.ones(window)/window, mode='valid')
+    if len(values) < window:
+        return values
+    smoothed = np.zeros_like(values, dtype=float)
+    half_window = window // 2
+    for i in range(len(values)):
+        start = max(0, i - half_window)
+        end = min(len(values), i + half_window + 1)
+        smoothed[i] = np.mean(values[start:end])
+    return smoothed
 
 def run_plotting(plot_individual=False):
     print(f"\nGenerating plots from logs, plot_individual={plot_individual}...")
-    scenarios = ["Shaped_Reward", "Base_Reward"]
-    colors = {"Shaped_Reward": "#2a9dff", "Base_Reward": "#ff5353"}
+    scenario_names = [name.replace(' ', '_') for name, _, _ in SCENARIOS]
+    scenarios = scenario_names
+    colors = {name: COLORS.get(name, "#000000") for name in scenario_names}
 
     all_raw_data = {s: [] for s in scenarios}
     runtimes = {s: [] for s in scenarios}
@@ -236,7 +280,7 @@ def run_plotting(plot_individual=False):
         files = glob.glob(os.path.join(LOG_DIR, f"stats_{name}_run*.npz"))
         for f in files:
             d = np.load(f)
-            iters = d['timestamps'] // TOTAL_AGENTS_PER_STEP
+            iters = d['timestamps'] // AGENTS_PER_STEP
             if len(iters) > 0:
                 min_iter = min(min_iter, iters[0])
                 max_iter = max(max_iter, iters[-1])
@@ -269,12 +313,11 @@ def run_plotting(plot_individual=False):
     individual_alpha = 0.2
 
     # Suptitle w stats
-    suptitle_parts = [f"{NUM_RUNS} runs each"]
-    for name in scenarios:
-        suptitle_parts.append(f"{name}: {scenario_stats[name]['episodes']} episodes, avg {scenario_stats[name]['avg_runtime']:.1f}s")
-    suptitle_parts.append(f"Smoothing window={WINDOW}")
-    suptitle = "Training Analysis: " + ", ".join(suptitle_parts)
-    fig.suptitle(suptitle, fontsize=12, fontweight='bold')
+    line1 = f"Training Analysis: {N_RUNS_PER_SCENARIO} runs each, Smoothing window={SMOOTH_WINDOW}, Mean with 25-75% percentiles"
+    if plot_individual:
+        line1 += ", Individual runs shown"
+    line2 = ", ".join([f"{name}: {scenario_stats[name]['episodes']} episodes, avg {scenario_stats[name]['avg_runtime']:.1f}s" for name in scenarios])
+    fig.suptitle(f"{line1}\n{line2}", fontsize=10, fontweight='bold')
 
     mean_ys = {metric: [] for metric in metrics}
     percentile_ys = {metric: {'p25': [], 'p75': []} for metric in metrics}
@@ -284,16 +327,15 @@ def run_plotting(plot_individual=False):
         
         # Title
         base_title = metric.capitalize()
-        title_info = f"{base_title} (25-75% percentiles)"
-        ax.set_title(title_info, fontsize=14, fontweight='bold')
+        ax.set_title(base_title, fontsize=14, fontweight='bold')
         
         for name in scenarios:
             if metric in ['team', 'length']:
                 interp_runs = []
                 for d in all_raw_data[name]:
-                    iters = d['timestamps'] // TOTAL_AGENTS_PER_STEP
+                    iters = d['timestamps'] // AGENTS_PER_STEP
                     val = d['team'] if metric == 'team' else d['length']
-                    val_s = smooth_data(val, window=WINDOW)
+                    val_s = smooth_data(val, window=SMOOTH_WINDOW)
                     iter_s = iters[len(iters)-len(val_s):]
                     if len(iter_s) > 1:
                         interp = np.interp(common_x, iter_s, val_s)
@@ -320,8 +362,8 @@ def run_plotting(plot_individual=False):
                     agent_color = mcolors.hsv_to_rgb(hsv)
                     interp_runs = []
                     for d in all_raw_data[name]:
-                        iters = d['timestamps'] // TOTAL_AGENTS_PER_STEP
-                        val_s = smooth_data(d[archer], window=WINDOW)
+                        iters = d['timestamps'] // AGENTS_PER_STEP
+                        val_s = smooth_data(d[archer], window=SMOOTH_WINDOW)
                         iter_s = iters[len(iters)-len(val_s):]
                         if len(iter_s) > 1:
                             interp = np.interp(common_x, iter_s, val_s)
@@ -348,8 +390,8 @@ def run_plotting(plot_individual=False):
                     agent_color = mcolors.hsv_to_rgb(hsv)
                     interp_runs = []
                     for d in all_raw_data[name]:
-                        iters = d['timestamps'] // TOTAL_AGENTS_PER_STEP
-                        val_s = smooth_data(d[knight], window=WINDOW)
+                        iters = d['timestamps'] // AGENTS_PER_STEP
+                        val_s = smooth_data(d[knight], window=SMOOTH_WINDOW)
                         iter_s = iters[len(iters)-len(val_s):]
                         if len(iter_s) > 1:
                             interp = np.interp(common_x, iter_s, val_s)
@@ -367,13 +409,12 @@ def run_plotting(plot_individual=False):
                         percentile_ys[metric]['p25'].extend(p25)
                         percentile_ys[metric]['p75'].extend(p75)
 
-        # ax.legend(loc='upper right')
         ax.legend(loc='upper left')
         ax.set_ylabel("Episode Length" if metric == 'length' else "Raw Reward")
-        ax.set_xlabel(f"Iterations (Timesteps / {TOTAL_AGENTS_PER_STEP})")
+        ax.set_xlabel(f"Iterations (Timesteps / {AGENTS_PER_STEP})")
 
         # Add agent icons
-        move_x, move_y = 0.0, -0.1
+        move_x, move_y = 0.0, -0.2
         if metric == 'archers':
             try:
                 img = mpimg.imread('assets/archer.png')
@@ -411,13 +452,43 @@ def run_plotting(plot_individual=False):
     print("Plot saved.")
     plt.show()
 
+
+
+
+# ==============
+#    PLAYING
+# ==============
+
 def run_play(args):
-    use_shaping = (args.scenario == "Shaped_Reward")
-    model_path = os.path.join(MODELS_DIR, f"ppo_{args.scenario}_run{args.run}.zip")
+    scenarios = [
+        {"name": name, "key": name.replace(' ', '_'), "use_shaping": use_shaping, "shapings": shapings}
+        for name, use_shaping, shapings in SCENARIOS
+    ]
+    
+    print("Choose a scenario for playback:")
+    for i, s in enumerate(scenarios, 1):
+        print(f"{i}. {s['name']}")
+    
+    while True:
+        try:
+            choice = int(input("Enter choice (1-4): "))
+            if 1 <= choice <= 4:
+                break
+            else:
+                print("Invalid choice. Enter 1, 2, 3, or 4.")
+        except ValueError:
+            print("Invalid input. Enter a number.")
+    
+    selected = scenarios[choice - 1]
+    use_shaping = selected["use_shaping"]
+    shapings = selected["shapings"]
+    scenario_key = selected["key"]
+    
+    model_path = os.path.join(MODELS_DIR, f"ppo_{scenario_key}_run{args.run}.zip")
     if not os.path.exists(model_path):
         print(f"Model {model_path} not found."); return
 
-    print(f"Loading model for playback: {args.scenario} run {args.run}...")
+    print(f"Loading model for playback: {selected['name']} run {args.run}...")
     model = PPO.load(model_path)
 
     # manual loop to bypass MarkovVectorEnv errors
@@ -426,7 +497,7 @@ def run_play(args):
         num_archers=NUM_ARCHERS, num_knights=NUM_KNIGHTS, vector_state=True
     )
     if use_shaping:
-        env = KnightShapingWrapper(env)
+        env = RewardShapingWrapper(env, shapings, total_timesteps=REAL_TOTAL_TIMESTEPS)
     env = ss.black_death_v3(env)
     env = ss.flatten_v0(env)
 
@@ -451,7 +522,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("mode", choices=["train", "plot", "play"])
     parser.add_argument("--individual", action="store_true")
-    parser.add_argument("--scenario", choices=["Shaped_Reward", "Base_Reward"], default="Shaped_Reward")
     parser.add_argument("--run", type=int, default=1)
     args = parser.parse_args()
     if args.mode == "train": run_training()

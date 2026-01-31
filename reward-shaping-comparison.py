@@ -6,7 +6,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import matplotlib.image as mpimg
-from matplotlib.offsetbox import OffsetImage, AnnotationBbox
 import supersuit as ss
 import multiprocessing
 import time
@@ -16,13 +15,13 @@ from stable_baselines3.common.vec_env import VecMonitor
 from stable_baselines3.common.utils import set_random_seed
 from pettingzoo.butterfly import knights_archers_zombies_v10
 from pettingzoo.utils.wrappers import BaseParallelWrapper
-from reward_shaping import no_shaping, proximity_shaping, bottom_safety_shaping
+from reward_shaping import proximity_shaping, bottom_safety_shaping, position_shaping
 
 # === CONFIG ===
 
-TOTAL_TIMESTEPS = 100000
+TOTAL_TIMESTEPS = 20000000
 
-N_RUNS_PER_SCENARIO = 2
+N_RUNS_PER_SCENARIO = 4
 SPAWN_RATE = 5 # every X steps
 NUM_ARCHERS, NUM_KNIGHTS = 2, 2
 MAX_ZOMBIES = 10
@@ -40,22 +39,31 @@ COLORS = {
     "Base_Reward": "#ff5353",
     "Proximity_Shaping": "#2a9dff",
     "Bottom_Safety_Shaping": "#28a745",
-    "Mixed_Shaping": "#ffa500"
+    "Mixed_Shaping_(prox+bottom)": "#ffa500",
+    "Mixed_Shaping_(prox+bottom+pos)": "#800080"
 }
 
 # SCENARIOS: (name, use_shaping, shapings_list)
 # Each shaping in shapings_list: {"func": func, "kwargs": {}, "start_pct": 0.0, "end_pct": 1.0}
 SCENARIOS = [
     ("Base Reward", False, []),
-    ("Proximity Shaping", True, [
-        {"func": proximity_shaping, "kwargs": {"reward_scale": 0.05}, "start_pct": 0.0, "end_pct": 1.0}
+    # ("Proximity Shaping", True, [
+    #     {"func": proximity_shaping, "kwargs": {"reward_scale": 0.05}, "start_pct": 0.0, "end_pct": 1.0}
+    # ]),
+    # ("Bottom Safety Shaping", True, [
+    #     {"func": bottom_safety_shaping, "kwargs": {"bottom_threshold": 0.8, "reward_scale": 0.05}, "start_pct": 0.0, "end_pct": 1.0}
+    # ]),
+    ("Position Shaping", True, [
+        {"func": position_shaping, "kwargs": {"n_archers": NUM_ARCHERS, "n_knights": NUM_KNIGHTS, "reward_scale": 0.05}, "start_pct": 0.0, "end_pct": 1.0}
     ]),
-    ("Bottom Safety Shaping", True, [
-        {"func": bottom_safety_shaping, "kwargs": {"bottom_threshold": 0.8, "reward_scale": 0.05}, "start_pct": 0.0, "end_pct": 1.0}
-    ]),
-    ("Mixed Shaping", True, [
+    ("Mixed Shaping_(prox+bottom)", True, [
         {"func": proximity_shaping, "kwargs": {"reward_scale": 0.05}, "start_pct": 0.0, "end_pct": 0.5},
         {"func": bottom_safety_shaping, "kwargs": {"bottom_threshold": 0.8, "reward_scale": 0.05}, "start_pct": 0.0, "end_pct": 0.3}
+    ]),
+    ("Mixed Shaping_(prox+bottom+pos)", True, [
+        {"func": proximity_shaping, "kwargs": {"reward_scale": 0.05}, "start_pct": 0.0, "end_pct": 0.5},
+        {"func": bottom_safety_shaping, "kwargs": {"bottom_threshold": 0.8, "reward_scale": 0.05}, "start_pct": 0.0, "end_pct": 0.3},
+        {"func": position_shaping, "kwargs": {"n_archers": NUM_ARCHERS, "n_knights": NUM_KNIGHTS, "reward_scale": 0.05}, "start_pct": 0.0, "end_pct": 0.5},
     ])
 ]
 
@@ -72,7 +80,7 @@ if not os.path.exists(LOG_DIR): os.makedirs(LOG_DIR)
 if not os.path.exists(MODELS_DIR): os.makedirs(MODELS_DIR)
 
 # For smoothing the plot lines
-SMOOTH_WINDOW = 300 if REAL_TOTAL_TIMESTEPS >= 5_000_000 else 100 if REAL_TOTAL_TIMESTEPS >= 1_000_000 else 40
+SMOOTH_WINDOW = 500 if REAL_TOTAL_TIMESTEPS >= 5_000_000 else 100
 
 
 # ==============
@@ -358,7 +366,7 @@ def run_plotting(plot_individual=False):
                 for i, archer in enumerate(archer_names):
                     base_color = colors[name]
                     hsv = mcolors.rgb_to_hsv(mcolors.to_rgb(base_color))
-                    hsv[0] = (hsv[0] + i * 0.05) % 1
+                    hsv[0] = (hsv[0] + i * 0.03) % 1
                     agent_color = mcolors.hsv_to_rgb(hsv)
                     interp_runs = []
                     for d in all_raw_data[name]:
@@ -386,7 +394,7 @@ def run_plotting(plot_individual=False):
                 for i, knight in enumerate(knight_names):
                     base_color = colors[name]
                     hsv = mcolors.rgb_to_hsv(mcolors.to_rgb(base_color))
-                    hsv[0] = (hsv[0] + i * 0.1) % 1
+                    hsv[0] = (hsv[0] + i * 0.03) % 1
                     agent_color = mcolors.hsv_to_rgb(hsv)
                     interp_runs = []
                     for d in all_raw_data[name]:
@@ -466,16 +474,17 @@ def run_play(args):
     ]
     
     print("Choose a scenario for playback:")
+    n_scenarios = len(scenarios)
     for i, s in enumerate(scenarios, 1):
         print(f"{i}. {s['name']}")
     
     while True:
         try:
-            choice = int(input("Enter choice (1-4): "))
-            if 1 <= choice <= 4:
+            choice = int(input(f"Enter choice (1-{n_scenarios}): "))
+            if 1 <= choice <= n_scenarios:
                 break
             else:
-                print("Invalid choice. Enter 1, 2, 3, or 4.")
+                print(f"Invalid choice. Enter a number between 1 and {n_scenarios}.")
         except ValueError:
             print("Invalid input. Enter a number.")
     
@@ -506,7 +515,6 @@ def run_play(args):
         while env.agents:
             actions = {}
             for agent in env.agents:
-                # model.predict handles raw flattened vector from PettingZoo ?
                 action, _ = model.predict(obs[agent], deterministic=True)
                 actions[agent] = action
             

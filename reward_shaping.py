@@ -1,8 +1,5 @@
 import numpy as np
 
-def no_shaping(obs, agent, rewards, infos):
-    return 0.0
-
 def proximity_shaping(obs, agent, rewards, infos, reward_scale=0.05):
     """ Reward knights for being closer to the nearest zombie """
     if "knight" not in agent:
@@ -42,3 +39,22 @@ def bottom_safety_shaping(obs, agent, rewards, infos, bottom_threshold=0.8, rewa
         base_reward = 1.0 - 2.0 * (max_y - upper) / (2.0 * width)
     
     return reward_scale * base_reward
+
+def position_shaping(obs, agent, rewards, infos, n_archers, n_knights, reward_scale=0.1):
+    """ Reward agents for being scattered efficiently (knights high & scattered, archers low & scattered) """
+    optimal_knight_y = 0.33
+    optimal_archer_y = 0.67
+    agent_type = "archer" if "archer" in agent else "knight"
+    agent_number = int(agent.split("_")[1])
+    agent_x, agent_y = obs[agent][0, 1], obs[agent][0, 2]
+    if agent_type == "knight":
+        optimal_y = optimal_knight_y
+        n_agents = n_knights
+    else:
+        optimal_y = optimal_archer_y
+        n_agents = n_archers
+    
+    # For 1 agent, x must be 0.5, for 2 agents 0.33 and 0.67, for 3 agents 0.25, 0.5, 0.75, etc.
+    optimal_x = (1.0 / (n_agents + 1)) * (agent_number + 1)
+    dist = np.sqrt((agent_x - optimal_x) ** 2 + (agent_y - optimal_y) ** 2)
+    return reward_scale * (1.0 - dist)

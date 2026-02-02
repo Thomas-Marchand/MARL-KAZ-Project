@@ -1,4 +1,4 @@
-<div align="center"> ![40M-play](40M-play.gif) </div>
+<p align="center"><img src="40M-play.gif" alt="40M-play"></p>
 
 # MARL with Knights, Archers, Zombies (KAZ)
 

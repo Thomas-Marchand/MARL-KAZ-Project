@@ -1,7 +1,7 @@
 import os
 import multiprocessing
 
-TOTAL_TIMESTEPS_MILLIONS = 0.1
+TOTAL_TIMESTEPS_MILLIONS = 10
 N_RUNS_PER_SCENARIO = 2
 PARALLEL_ENVS = 2
 
@@ -28,9 +28,7 @@ COLORS = {
 # SCENARIOS: (name, observation_radius, use_shaping, shapings_list)
 SCENARIOS = [
     ("Decentralized_0.2", "decentralized", 0.2, False, []),
-    
     ("Shared_Vision_0.2", "shared", 0.2, False, []),
-
     ("Full_Vision", "full", 100.0, False, []) 
 ]
 

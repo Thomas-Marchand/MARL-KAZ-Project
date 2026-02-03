@@ -10,7 +10,7 @@ from stable_baselines3.common.utils import set_random_seed
 from pettingzoo.butterfly import knights_archers_zombies_v10
 from pettingzoo.utils.wrappers import BaseParallelWrapper
 from config import (TOTAL_TIMESTEPS, N_RUNS_PER_SCENARIO, SPAWN_RATE, NUM_ARCHERS, NUM_KNIGHTS, MAX_ZOMBIES, MAX_ARROWS,
-                    PARALLEL_ENVS, N_STEPS_PPO, REAL_TOTAL_TIMESTEPS, AGENT_NAMES, OUTPUT_DIR, LOG_DIR, MODELS_DIR, SCENARIOS, N_CPUS)
+                    PARALLEL_ENVS, N_STEPS_PPO, REAL_TOTAL_TIMESTEPS, AGENT_NAMES, LOG_DIR, MODELS_DIR, SCENARIOS, N_CPUS)
 
 
 # Shaping
@@ -154,18 +154,37 @@ def train_single_run(args):
     
     print(f"STARTING: {name} | RUN: {run_idx}")
     start_time = time.time()
+
     env = make_env(use_shaping=use_shaping, num_envs=PARALLEL_ENVS, shapings=shapings, total_timesteps=REAL_TOTAL_TIMESTEPS)
-    model = PPO("MlpPolicy", env, verbose=0, learning_rate=3e-4, batch_size=2048, n_steps=N_STEPS_PPO)
     callback = AgentBreakdownCallback(run_idx, use_shaping=use_shaping)
+    if name == "Random":
+        obs = env.reset() # random logic
+        callback.init_callback(model=None)
+        current_steps = 0
+        while current_steps < REAL_TOTAL_TIMESTEPS:
+            # random actions for all parallel envs and all agents
+            actions = np.array([env.action_space.sample() for _ in range(env.num_envs)])
+            obs, rewards, dones, infos = env.step(actions)
+            
+            callback.locals = {"infos": infos}
+            callback.num_timesteps = current_steps
+            callback._on_step()
+            
+            current_steps += PARALLEL_ENVS * (NUM_ARCHERS + NUM_KNIGHTS)
+    else:
+        model = PPO("MlpPolicy", env, verbose=0, learning_rate=3e-4, batch_size=2048, n_steps=N_STEPS_PPO)
+        model.learn(total_timesteps=TOTAL_TIMESTEPS, callback=callback)
+        model.save(os.path.join(MODELS_DIR, f"ppo_{run_name}"))
     
-    model.learn(total_timesteps=TOTAL_TIMESTEPS, callback=callback)
+    # model = PPO("MlpPolicy", env, verbose=0, learning_rate=3e-4, batch_size=2048, n_steps=N_STEPS_PPO)
+    # model.learn(total_timesteps=TOTAL_TIMESTEPS, callback=callback)
 
     runtime = time.time() - start_time
     data = callback.get_data()
     data['runtime'] = runtime
 
     np.savez(os.path.join(LOG_DIR, f"stats_{run_name}.npz"), **data)
-    model.save(os.path.join(MODELS_DIR, f"ppo_{run_name}"))
+    # model.save(os.path.join(MODELS_DIR, f"ppo_{run_name}"))
     env.close()
     
     print(f"FINISHED: {name} | RUN: {run_idx} | Runtime: {runtime:.2f}s")

@@ -2,7 +2,7 @@
 
 # MARL with Knights, Archers, Zombies (KAZ)
 
-This project explores the impact of different reward shaping techniques on multi-agent reinforcement learning (MARL) performance in the PettingZoo's Knights, Archers, Zombies (KAZ) environment. It compares baseline rewards against various shaping strategies using Proximal Policy Optimization (PPO) from Stable Baselines3.
+This project explores the impact of different reward shaping techniques, as well as sharing limited observations, on multi-agent reinforcement learning (MARL) performance in the PettingZoo's Knights, Archers, Zombies (KAZ) environment. It compares them using Proximal Policy Optimization (PPO) from Stable Baselines3.
 
 ## Overview
 
@@ -19,6 +19,7 @@ The KAZ environment features cooperative agents (knights and archers) defending 
 
 - Multi-run experiments with statistical analysis and plotting
 - Custom reward shaping wrapper
+- Limiting observations / sharing observations among agents
 - Visualization of trained agents
 
 ## Installation
@@ -38,7 +39,9 @@ pip install numpy matplotlib supersuit stable-baselines3 pettingzoo
 
 ## Usage
 
-### Running Experiments
+### Running Experiments (Reward Shaping)
+
+This is for Reward Shaping. For visualization and 
 
 Execute the main training:
 
@@ -67,10 +70,10 @@ Which will prompt the user to select a scenario and run a trained model visually
 
 Key parameters in `config.py`:
 
-- `TOTAL_TIMESTEPS`: Total training steps per run
+- `TOTAL_TIMESTEPS_MILLIONS`: Total training steps per run (in millions)
 - `N_RUNS_PER_SCENARIO`: Number of random seeds per scenario
 - `PARALLEL_ENVS`: Number of parallel environments
-- `SCENARIOS`: List of reward shaping strategies to evaluate
+- `SCENARIOS`: List of reward shaping strategies / visualization scenarios (for /visualization) to evaluate
 
 ### Custom Reward Shaping
 
@@ -90,3 +93,4 @@ def custom_shaping(obs, agent, rewards, infos, **kwargs):
 
 - [PettingZoo KAZ Environment](https://pettingzoo.farama.org/environments/butterfly/knights_archers_zombies/)
 - [Stable Baselines3](https://stable-baselines3.readthedocs.io/)
+- [This REPO](https://github.com/Thomas-Marchand/MARL-KAZ-Project)

@@ -28,7 +28,7 @@ def run_play(num):
     selected = scenarios[choice - 1]
     scenario_key = selected["key"]
     
-    model_path = os.path.join(MODELS_DIR, f"ppo_{scenario_key}_run{num}.zip")
+    model_path = os.path.join(MODELS_DIR, f"ppo_{scenario_key}_run{num}")
     if not os.path.exists(model_path):
         print(f"Model {model_path} not found."); return
 

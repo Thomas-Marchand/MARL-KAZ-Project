@@ -7,7 +7,6 @@ TOTAL_TIMESTEPS_MILLIONS = 40
 N_RUNS_PER_SCENARIO = 2
 PARALLEL_ENVS = 4
 
-
 TOTAL_TIMESTEPS = TOTAL_TIMESTEPS_MILLIONS * 1_000_000
 SPAWN_RATE = 5 # every X steps
 NUM_ARCHERS, NUM_KNIGHTS = 2, 2
@@ -23,9 +22,11 @@ REAL_TOTAL_TIMESTEPS = ((TOTAL_TIMESTEPS + STEP_SIZE - 1) // STEP_SIZE) * STEP_S
 
 # COLORS for scenarios
 COLORS = {
+    "Random": "#999999",
     "Base_Reward": "#ff5353",
     "Proximity_Shaping": "#2a9dff",
     "Bottom_Safety_Shaping": "#28a745",
+    "Position_Shaping": "#a020f0",
     "Mixed_Shaping_(prox+bottom)": "#ffa500",
     "Mixed_Shaping_(prox+bottom+pos)": "#800080"
 }
@@ -33,6 +34,7 @@ COLORS = {
 # SCENARIOS: (name, use_shaping, shapings_list)
 # Each shaping in shapings_list: {"func": func, "kwargs": {}, "start_pct": 0.0, "end_pct": 1.0}
 SCENARIOS = [
+    # ("Random", False, []),
     # ("Base Reward", False, []),
     # ("Proximity Shaping", True, [
     #     {"func": proximity_shaping, "kwargs": {"reward_scale": 0.05}, "start_pct": 0.0, "end_pct": 1.0}
@@ -47,6 +49,10 @@ SCENARIOS = [
         {"func": proximity_shaping, "kwargs": {"reward_scale": 0.05}, "start_pct": 0.0, "end_pct": 0.5},
         {"func": bottom_safety_shaping, "kwargs": {"bottom_threshold": 0.8, "reward_scale": 0.05}, "start_pct": 0.0, "end_pct": 0.3}
     ]),
+    # ("Mixed Shaping_(prox+bottom)", True, [
+    #     {"func": proximity_shaping, "kwargs": {"reward_scale": 0.05}, "start_pct": 0.0, "end_pct": 1.0},
+    #     {"func": bottom_safety_shaping, "kwargs": {"bottom_threshold": 0.8, "reward_scale": 0.05}, "start_pct": 0.0, "end_pct": 1.0}
+    # ]),
     ("Mixed Shaping_(prox+bottom+pos)", True, [
         {"func": proximity_shaping, "kwargs": {"reward_scale": 0.05}, "start_pct": 0.0, "end_pct": 0.5},
         {"func": bottom_safety_shaping, "kwargs": {"bottom_threshold": 0.8, "reward_scale": 0.05}, "start_pct": 0.0, "end_pct": 0.5},
@@ -67,4 +73,4 @@ if not os.path.exists(LOG_DIR): os.makedirs(LOG_DIR)
 if not os.path.exists(MODELS_DIR): os.makedirs(MODELS_DIR)
 
 # For smoothing the plot lines
-SMOOTH_WINDOW = 500 if REAL_TOTAL_TIMESTEPS >= 5_000_000 else 100
+SMOOTH_WINDOW = 2000 if REAL_TOTAL_TIMESTEPS >= 20_000_000 else 500 if REAL_TOTAL_TIMESTEPS >= 1_000_000 else 100

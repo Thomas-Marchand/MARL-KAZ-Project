@@ -43,7 +43,7 @@ pip install numpy matplotlib supersuit stable-baselines3 pettingzoo
 Execute the main training:
 
 ```bash
-python reward-shaping-comparison.py train
+python train.py
 ```
 
 This will train agents under all defined reward shaping scenarios, saving logs and models in `RShaping_<parallel_envs>x<runs>x<timesteps>/` directories.
@@ -52,22 +52,20 @@ This will train agents under all defined reward shaping scenarios, saving logs a
 To generate plots from the training logs:
 
 ```bash
-python reward-shaping-comparison.py plot
-# or
-python reward-shaping-comparison.py plot --individual
+python plotting.py
 ```
 
 ### Playing a Trained Model
 To visually play a trained model:
 ```bash
-python reward-shaping-comparison.py play
+python play.py
 ```
 
 Which will prompt the user to select a scenario and run a trained model visually.
 
 ### Configuration
 
-Key parameters in `reward-shaping-comparison.py`:
+Key parameters in `config.py`:
 
 - `TOTAL_TIMESTEPS`: Total training steps per run
 - `N_RUNS_PER_SCENARIO`: Number of random seeds per scenario

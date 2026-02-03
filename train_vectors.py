@@ -32,9 +32,9 @@ class DecentralizedVisionWrapper(BaseParallelWrapper):
         for agent in obs:
             obs[agent] = self.mask_observation(obs[agent])
         self.step_count += 1
-        if self.step_count % 1000 == 0:
-            for agent in obs:
-                num_entities = np.sum(np.any(obs[agent] != 0, axis=1))
+        # if self.step_count % 1000 == 0 and obs:
+            # for agent in obs:
+                # num_entities = np.sum(np.any(obs[agent] != 0, axis=1))
                 # print(f"Vision: decentralized, Range: {self.radius}, Agent: {agent}, Entities seen: {num_entities}")
         return obs, rewards, terminations, truncations, infos
 
@@ -56,9 +56,9 @@ class SharedVisionWrapper(BaseParallelWrapper):
         obs, rewards, terminations, truncations, infos = super().step(actions)
         obs = self.apply_shared_mask(obs)
         self.step_count += 1
-        if self.step_count % 1000 == 0:
-            agent = list(obs.keys())[0]
-            num_entities = np.sum(np.any(obs[agent] != 0, axis=1))
+        # if self.step_count % 1000 == 0 and obs:
+            # agent = list(obs.keys())[0]
+            # num_entities = np.sum(np.any(obs[agent] != 0, axis=1))
             # print(f"Vision: shared, Range: {self.radius}, Entities seen: {num_entities}")
         return obs, rewards, terminations, truncations, infos
 

@@ -2,7 +2,9 @@
 
 # MARL with Knights, Archers, Zombies (KAZ)
 
-This project explores the impact of different reward shaping techniques, as well as sharing limited observations, on multi-agent reinforcement learning (MARL) performance in the PettingZoo's Knights, Archers, Zombies (KAZ) environment. It compares them using Proximal Policy Optimization (PPO) from Stable Baselines3.
+This project explores the impact of different reward shaping techniques, as well as sharing limited observations, on multi-agent reinforcement learning (MARL) performance in the PettingZoo's Knights, Archers, Zombies (KAZ) environment. It compares them using Proximal Policy Optimization (PPO) from Stable Baselines3.  
+
+This repository is still being updated to explore more algorithms like MAPPO instead of just PPO.
 
 ## Overview
 
